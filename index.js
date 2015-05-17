@@ -123,7 +123,19 @@ var Connection = function(port, host, socket, syn) {
 			self.emit('error', err);
 		});
 
-		socket.bind();
+		if (typeof socket.localAddress == 'function') {
+			socket.localAddress(function gotLocalAddress(err, localAddress) {
+				if (err != null) {
+					throw err;
+				}
+
+				socket.bind({address: localAddress});
+			});
+		} else if (socket.localAddress) {
+			socket.bind({address: socket.localAddress});
+		} else {
+			socket.bind();
+		}
 	}
 
 	var resend = setInterval(this._resend.bind(this), 500);
@@ -345,20 +357,64 @@ Server.prototype.listenSocket = function(socket, onlistening) {
 }
 
 Server.prototype.listen = function(port, onlistening) {
-	if (typeof port === 'object' && typeof port.on === 'function') return this.listenSocket(port, onlistening);
+
+	var config = {};
+
+	if (typeof port === 'object' && port){
+		if (typeof port.on === 'function') {
+			return this.listenSocket(port, onlistening);
+		} else {
+			config.port = port.port;
+			onlistening = port.onlistening;
+			config.localAddress = port.localAddress || port.address;
+		}
+	} else {
+		config.port = port;
+	}
+
 	var socket = dgram.createSocket('udp4');
 	this.listenSocket(socket, onlistening);
-	socket.bind(port);
+
+	var options = {
+		port: config.port
+	};
+
+	if (typeof config.localAddress == 'function') {
+		return config.localAddress(function gotLocalAddress(err, localAddress) {
+
+			if (err != null) {
+				throw err;
+			}
+
+			options.address = localAddress;
+			socket.bind(options);
+		});
+	} else if (config.localAddress) {
+		options.address = config.localAddress;
+	}
+
+	socket.bind(options);
 };
 
 exports.createServer = function(onconnection) {
+
+	var localAddress;
+
 	var server = new Server();
 	if (onconnection) server.on('connection', onconnection);
 	return server;
 };
 
 exports.connect = function(port, host) {
+
 	var socket = dgram.createSocket('udp4');
+
+	if (typeof port == 'object' && port) {
+		socket.localAddress = port.localAddress;
+		host = port.host;
+		port = port.port;
+	}
+
 	var connection = new Connection(port, host || '127.0.0.1', socket, null);
 
 	socket.on('message', function(message) {
